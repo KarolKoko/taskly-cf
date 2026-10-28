@@ -1,0 +1,63 @@
+name: taskly-app-node
+
+services:
+  postgres:
+    container_name: taskly-app-node-postgres
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Copy .env.example to .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Copy .env.example to .env}
+      POSTGRES_DB: ${POSTGRES_DB:?Copy .env.example to .env}
+    ports:
+      - "127.0.0.1:${DB_PORT:?Copy .env.example to .env}:5432"
+    volumes:
+      - taskly-app-node-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+  backend:
+    container_name: taskly-app-node-backend
+    image: taskly-app-node-backend
+    build: ./backend
+    ports:
+      - "127.0.0.1:${API_PORT:?Copy .env.example to .env}:8000"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER:?Copy .env.example to .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Copy .env.example to .env}
+      POSTGRES_DB: ${POSTGRES_DB:?Copy .env.example to .env}
+      DB_PORT: "5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8000/api/health', {signal: AbortSignal.timeout(3000)}).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+  frontend:
+    container_name: taskly-app-node-frontend
+    image: taskly-app-node-frontend
+    build: ./frontend
+    ports:
+      - "127.0.0.1:${WEB_PORT:?Copy .env.example to .env}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  taskly-app-node-postgres-data:
+    # Keep the existing database when renaming the Compose project.
+    name: taskly-app-main_postgres-data

@@ -1,0 +1,23 @@
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Todo {
+  id          Int       @id @default(autoincrement())
+  title       String    @db.VarChar(120)
+  description String    @default("") @db.VarChar(2000)
+  priority    String    @default("medium") @db.VarChar(6)
+  due_date    DateTime? @db.Date
+  completed   Boolean   @default(false)
+  created_at  DateTime  @db.Timestamptz(6)
+  updated_at  DateTime  @db.Timestamptz(6)
+
+  @@map("todos")
+}

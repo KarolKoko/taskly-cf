@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build output and caches
+dist/
+storybook-static/
+.vite/
+*.tsbuildinfo
+backend/src/generated/prisma/
+
+# Test coverage
+coverage/
+
+# Local environment variables
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+assignment-4.md
+
+# macOS
+.DS_Store
