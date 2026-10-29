@@ -2,6 +2,8 @@
 
 exports[`formatDate > returns 1`] = `"15 Jan 2026"`;
 
+exports[`isDueSoon > returns when !(todo.completed || !todo.due_date || todo.due_date < today) 1`] = `false`;
+
 exports[`isOverdue > returns 1`] = `false`;
 
 exports[`selectTodos > returns 1`] = `[]`;

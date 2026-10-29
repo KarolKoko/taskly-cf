@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, afterEach } from 'vitest';
-import { validateTodo, selectTodos, isOverdue, formatDate } from './todos';
+import { validateTodo, selectTodos, isOverdue, isDueSoon, formatDate } from './todos';
 
 
 // Generated from the code, frontend rules and sampled DB rows - review before committing. Jest APIs used:
@@ -10,6 +10,7 @@ import { validateTodo, selectTodos, isOverdue, formatDate } from './todos';
 //   test.each(table)(name, fn, timeout) - https://jestjs.io/docs/api#testeachtablename-fn-timeout
 //   .toEqual(value) - https://jestjs.io/docs/expect#toequalvalue
 //   expect(value) - https://jestjs.io/docs/expect#expectvalue
+//   .toBe(value) - https://jestjs.io/docs/expect#tobevalue
 //   .toMatchSnapshot(propertyMatchers?, hint?) - https://jestjs.io/docs/expect#tomatchsnapshotpropertymatchers-hint
 
 describe("validateTodo", () => {
@@ -211,6 +212,41 @@ describe("isOverdue", () => {
 
     const result = isOverdue(todo);
     expect(result).toMatchSnapshot(); // characterises: !todo.completed && !!todo.due_date && todo.due_date < `${today.getFullYear()}-${
+  });
+});
+
+describe("isDueSoon", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+  });
+
+  test("returns when todo.completed || !todo.due_date || todo.due_date < today", () => {
+    const todo = {
+      id: 7,
+      created_at: "2026-10-01T12:00:00Z",
+      updated_at: "2026-10-01T12:00:00Z",
+      completed: true,
+    } as Parameters<typeof isDueSoon>[0];
+    const today = "Sample today";
+    const days: any = undefined; // TODO: value for days
+
+    const result = isDueSoon(todo, today, days);
+    expect(result).toBe(false);
+  });
+
+  test("returns when !(todo.completed || !todo.due_date || todo.due_date < today)", () => {
+    const todo = {
+      id: 7,
+      created_at: "2026-10-01T12:00:00Z",
+      updated_at: "2026-10-01T12:00:00Z",
+      due_date: "2026-01-15",
+    } as Parameters<typeof isDueSoon>[0];
+    const today = "Sample today";
+    const days: any = undefined; // TODO: value for days
+
+    const result = isDueSoon(todo, today, days);
+    expect(result).toMatchSnapshot(); // characterises: Date.parse(`${todo.due_date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`) <= d
   });
 });
 
