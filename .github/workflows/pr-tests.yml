@@ -67,7 +67,7 @@ jobs:
       - name: Commit generated tests
         if: success() && github.event.pull_request.head.repo.full_name == github.repository
         run: |
-          git add -A -- 'backend/tests/*.gen.test.ts' 'backend/tests/__snapshots__' 'frontend/**/*.gen.test.ts' 'frontend/**/*.gen.test.tsx' 'frontend/**/__snapshots__'
+          git ls-files -mo --exclude-standard | grep -E '\.gen\.test\.tsx?$|__snapshots__/.*\.snap$' | xargs -r git add --
           if git diff --cached --quiet; then echo "Generated tests are up to date"; exit 0; fi
           git config user.name "unit-test-agent"
           git config user.email "unit-test-agent@users.noreply.github.com"
