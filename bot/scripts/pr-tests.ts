@@ -68,7 +68,7 @@ async function main() {
     const logs: string[] = []
     for (const { target, files: fs_ } of groups.values()) {
         const rel = fs_.map(f => path.relative(target.pkgDir, f).replace(/\\/g, '/'))
-        const args = target.runner === 'vitest' ? ['vitest', 'run', ...rel] : ['jest', '--runTestsByPath', ...fs_]
+        const args = target.runner === 'vitest' ? ['vitest', 'run', '--update=new', ...rel] : ['jest', '--ci=false', '--runTestsByPath', ...fs_]
         const run = spawnSync('npx', args, { encoding: 'utf8', cwd: target.pkgDir, env, shell: process.platform === 'win32' })
         ok = ok && run.status === 0
         logs.push(`${path.relative(process.cwd(), target.pkgDir) || '.'} (${target.runner}):\n${`${run.stdout ?? ''}\n${run.stderr ?? ''}`.trim().split('\n').slice(-TAIL_LINES).join('\n')}`)
