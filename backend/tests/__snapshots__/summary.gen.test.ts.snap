@@ -1,0 +1,9 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`summarizeTodos > returns when !(!/^\\d{4}-\\d{2}-\\d{2}$/.test(today)) 1`] = `
+{
+  "completed": 0,
+  "overdue": 0,
+  "total": 1,
+}
+`;
