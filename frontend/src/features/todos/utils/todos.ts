@@ -62,6 +62,12 @@ export function isOverdue(todo: Todo): boolean {
   return !todo.completed && !!todo.due_date && todo.due_date < localDate
 }
 
+export function isDueSoon(todo: Todo, today: string, days = 3): boolean {
+  if (todo.completed || !todo.due_date || todo.due_date < today) return false
+  const diff = Date.parse(`${todo.due_date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)
+  return diff <= days * 86_400_000
+}
+
 export function formatDate(date: string): string {
   return new Intl.DateTimeFormat('en-GB', {
     day: 'numeric',
