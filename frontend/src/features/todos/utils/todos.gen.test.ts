@@ -1,11 +1,11 @@
-import { describe, test, expect, jest, afterEach } from '@jest/globals';
+import { describe, test, expect, vi, afterEach } from 'vitest';
 import { validateTodo, selectTodos, isOverdue, formatDate } from './todos';
 
 
 // Generated from the code, frontend rules and sampled DB rows - review before committing. Jest APIs used:
 //   test(name, fn, timeout) - https://jestjs.io/docs/api#testname-fn-timeout
 //   describe(name, fn) - https://jestjs.io/docs/api#describename-fn
-//   jest.mock(moduleName, factory, options) - https://jestjs.io/docs/jest-object#jestmockmodulename-factory-options
+//   vi.mock(moduleName, factory, options) - https://jestjs.io/docs/jest-object#jestmockmodulename-factory-options
 //   .toHaveBeenCalledWith(arg1, arg2, ...) - https://jestjs.io/docs/expect#tohavebeencalledwitharg1-arg2-
 //   test.each(table)(name, fn, timeout) - https://jestjs.io/docs/api#testeachtablename-fn-timeout
 //   .toEqual(value) - https://jestjs.io/docs/expect#toequalvalue
@@ -14,8 +14,8 @@ import { validateTodo, selectTodos, isOverdue, formatDate } from './todos';
 
 describe("validateTodo", () => {
   afterEach(() => {
-    jest.clearAllMocks();
-    jest.restoreAllMocks();
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
   test("returns when !input.title.trim() and input.description.trim().length > 2000 and input.due_date and !/^\\d{4}...", () => {
@@ -177,8 +177,8 @@ describe("validateTodo", () => {
 
 describe("selectTodos", () => {
   afterEach(() => {
-    jest.clearAllMocks();
-    jest.restoreAllMocks();
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
   test("returns", () => {
@@ -198,8 +198,8 @@ describe("selectTodos", () => {
 
 describe("isOverdue", () => {
   afterEach(() => {
-    jest.clearAllMocks();
-    jest.restoreAllMocks();
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
   test("returns", () => {
@@ -210,14 +210,14 @@ describe("isOverdue", () => {
     } as Parameters<typeof isOverdue>[0];
 
     const result = isOverdue(todo);
-    expect(result).toEqual(!todo.completed && !!todo.due_date && todo.due_date < `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`);
+    expect(result).toMatchSnapshot(); // characterises: !todo.completed && !!todo.due_date && todo.due_date < `${today.getFullYear()}-${
   });
 });
 
 describe("formatDate", () => {
   afterEach(() => {
-    jest.clearAllMocks();
-    jest.restoreAllMocks();
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
   test("returns", () => {

@@ -5,7 +5,7 @@ on:
     types: [opened, synchronize, reopened]
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
 
 concurrency:
@@ -32,14 +32,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+            frontend/package-lock.json
 
       - run: npm ci
+      - run: npm ci --prefix backend
+      - run: npm ci --prefix frontend
 
       - name: Restore LLM cache
         if: env.USE_LLM == 'true'
@@ -55,16 +63,20 @@ jobs:
       - name: Generate and run tests
         run: npm run pr-tests
 
+      # Tests that pass are committed to the PR branch (not possible for forks - no write token)
+      - name: Commit generated tests
+        if: success() && github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          git add -A -- 'backend/tests/*.gen.test.ts' 'backend/tests/__snapshots__' 'frontend/**/*.gen.test.ts' 'frontend/**/*.gen.test.tsx' 'frontend/**/__snapshots__'
+          if git diff --cached --quiet; then echo "Generated tests are up to date"; exit 0; fi
+          git config user.name "unit-test-agent"
+          git config user.email "unit-test-agent@users.noreply.github.com"
+          git commit -m "test: update generated tests [skip ci]"
+          git push
+
       - name: Comment on PR
-        if: failure() && hashFiles('sanity-report.md', 'pr-report.md') != ''
+        if: always() && hashFiles('sanity-report.md', 'pr-report.md') != ''
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           header: agent-tests
           path: ${{ hashFiles('pr-report.md') != '' && 'pr-report.md' || 'sanity-report.md' }}
-
-      - name: Clear comment when green
-        if: success()
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: agent-tests
-          delete: true

@@ -1,8 +1,12 @@
 import { execFileSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { buildTests } from '../testBuilder';
+import { buildTests, skipped } from '../testBuilder';
 import { agentPlanner, agentSummary } from '../llmTests';
+import { changedRanges, changedFunctions } from '../diff';
+import { resolveTarget, Target } from '../runners';
+
+const changedSummary: string[] = []
 
 // Runs in CI on pull_request: changed source files -> native tests (+ agent edge cases) -> jest -> pr-report.md
 const REPORT = 'pr-report.md'
@@ -30,6 +34,7 @@ async function main() {
     const files = changedFiles()
     if (!files.length) report(true, 'No changed frontend/backend source files to test.', mode)
 
+    const base = process.env.BASE_SHA || 'origin/master'
     let written: string[]
     try {
         written = await buildTests(files.map(f => path.resolve(f)), {
@@ -38,16 +43,39 @@ async function main() {
             frontendDir: path.resolve('frontend'),
             backendDir: path.resolve('backend'),
             planner: useLlm ? agentPlanner : undefined,
+            changed: (file, fns) => {
+                const set = process.env.CHANGED_FILES ? new Set(fns.map(f => f.value)) : changedFunctions(fns, changedRanges(path.relative(process.cwd(), file).replace(/\\/g, '/'), base))
+                changedSummary.push(`\`${path.relative(process.cwd(), file).replace(/\\/g, '/')}\`: ${[...set].map(n => `\`${n}\``).join(', ') || 'none'}`)
+                return set
+            },
         })
     } catch (e) {
         report(false, `Test generation failed:\n\`\`\`text\n${(e as Error).message}\n\`\`\``, mode)
     }
     if (!written.length) report(true, 'No exported functions in the changed files - nothing to test.', mode)
 
-    const run = spawnSync('npx', ['jest', '--runTestsByPath', ...written], { encoding: 'utf8', shell: process.platform === 'win32' })
-    const output = `${run.stdout ?? ''}\n${run.stderr ?? ''}`.trim().split('\n').slice(-TAIL_LINES).join('\n')
+    // one run per package, with that package's own runner
+    const groups = new Map<string, { target: Target; files: string[] }>()
+    for (const f of written) {
+        const target = resolveTarget(f, /\.gen\.jest\.ts$/.test(f) ? 'jest' : undefined)
+        const g = groups.get(target.pkgDir) ?? { target, files: [] }
+        g.files.push(f)
+        groups.set(target.pkgDir, g)
+    }
+    // CI mode refuses to write new snapshots; generated tests create theirs on first run
+    const env = { ...process.env, CI: '' }
+    let ok = true
+    const logs: string[] = []
+    for (const { target, files: fs_ } of groups.values()) {
+        const rel = fs_.map(f => path.relative(target.pkgDir, f).replace(/\\/g, '/'))
+        const args = target.runner === 'vitest' ? ['vitest', 'run', ...rel] : ['jest', '--runTestsByPath', ...fs_]
+        const run = spawnSync('npx', args, { encoding: 'utf8', cwd: target.pkgDir, env, shell: process.platform === 'win32' })
+        ok = ok && run.status === 0
+        logs.push(`${path.relative(process.cwd(), target.pkgDir) || '.'} (${target.runner}):\n${`${run.stdout ?? ''}\n${run.stderr ?? ''}`.trim().split('\n').slice(-TAIL_LINES).join('\n')}`)
+    }
     const list = written.map(f => `- \`${path.relative(process.cwd(), f).replace(/\\/g, '/')}\``).join('\n')
-    report(run.status === 0, `Files:\n${list}\n\n\`\`\`text\n${output}\n\`\`\``, mode)
+    const skippedList = skipped.length ? `\n\nSkipped:\n${skipped.map(s => `- ${s}`).join('\n')}` : ''
+    report(ok, `Changed functions:\n${changedSummary.map(l => `- ${l}`).join('\n')}\n\nFiles:\n${list}${skippedList}\n\n\`\`\`text\n${logs.join('\n\n')}\n\`\`\``, mode)
 }
 
 main().catch(e => report(false, `\`\`\`text\n${String(e?.stack ?? e)}\n\`\`\``, 'error'))

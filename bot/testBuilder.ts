@@ -1,10 +1,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import * as ts from 'typescript';
 import { TestGenerator, Step } from './transformer';
 import { loadJestDocs, JestDoc } from './jestDocs';
 import { tagFunction, Tag, LITERAL, findDoc } from './tagger';
 import { collectInputs, CollectOptions, InputFactory, applyConditions, toLiteral, Param } from './inputs';
 import { AgentCase, Plan, allCalls, mergeInput, revive } from './cases';
+import { Runner, resolveTarget, testFileFor, respec } from './runners';
 
 const MAX_SCENARIOS = 12
 
@@ -76,6 +78,7 @@ const ALLOWED = new Set(['true', 'false', 'null', 'undefined', 'new', 'Error', '
 function assertable(expr: string, params: string[]): boolean {
     if (/\bawait\b|=>|\bfunction\b|\?|<fn>/.test(expr)) return false
     const stripped = expr
+        .replace(/`(?:\\.|[^`\\])*`/g, t => [...t.matchAll(/\$\{([^}]*)\}/g)].map(m => ` ${m[1]} `).join(';'))
         .replace(/(['"`])(?:\\.|(?!\1).)*\1/g, '""')
         .replace(/\.\s*[A-Za-z_$][\w$]*/g, '.p')
         .replace(/[A-Za-z_$][\w$]*\s*:/g, 'k:')
@@ -106,7 +109,7 @@ function isMockable(step: Step, imports: Map<string, string>): boolean {
 function mockTarget(callee: string, imports: Map<string, string>): string {
     const root = callee.split('.')[0]
     if (callee === root && imports.has(root)) return `jest.mocked(${callee})`
-    if (imports.has(root)) return `jest.spyOn(${callee.slice(0, callee.lastIndexOf('.'))}, '${callee.slice(callee.lastIndexOf('.') + 1)}' as never)`
+    if (imports.has(root)) return `(jest.spyOn(${callee.slice(0, callee.lastIndexOf('.'))}, '${callee.slice(callee.lastIndexOf('.') + 1)}' as never) as any)`
     return `jest.spyOn(globalThis as any, '${callee}')`
 }
 
@@ -196,22 +199,113 @@ function renderCase(fn: Step, c: AgentCase, imports: Map<string, string>, factor
     return out.join('\n')
 }
 
-export type Runner = 'jest' | 'vitest'
+const returnsJsx = (steps: Step[] = []): boolean =>
+    steps.some(s => (s.kind === 'return' && /<[A-Za-z>]/.test(s.value)) || returnsJsx(s.children) || returnsJsx(s.else))
+
+const isComponent = (file: string, fn: Step) => /\.tsx$/.test(file) && /^[A-Z]/.test(fn.value) && returnsJsx(fn.children)
+
+// prop name -> type text, from an inline `{ a: T }` or an interface / type alias declared in the same file
+function typeMembers(file: string, typeText: string): Map<string, string> {
+    let node: ts.TypeLiteralNode | ts.InterfaceDeclaration | undefined
+    if (typeText.startsWith('{')) {
+        const d = ts.createSourceFile('t.ts', `type T = ${typeText}`, ts.ScriptTarget.Latest, true).statements[0]
+        if (ts.isTypeAliasDeclaration(d) && ts.isTypeLiteralNode(d.type)) node = d.type
+    } else if (typeText) {
+        for (const st of ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true).statements) {
+            if (ts.isInterfaceDeclaration(st) && st.name.text === typeText) node = st
+            else if (ts.isTypeAliasDeclaration(st) && st.name.text === typeText && ts.isTypeLiteralNode(st.type)) node = st.type
+        }
+    }
+    const out = new Map<string, string>()
+    node?.members.forEach(m => {
+        if (ts.isPropertySignature(m) && m.type && (ts.isIdentifier(m.name) || ts.isStringLiteral(m.name))) out.set(m.name.text, m.type.getText())
+    })
+    return out
+}
+
+// `{ a, b: c = 1, ...rest }` -> [{prop:'a',local:'a'}, {prop:'b',local:'c'}]
+const destructured = (pattern: string) => pattern.replace(/^\{|\}$/g, '').split(',').map(x => x.trim()).filter(x => x && !x.startsWith('...'))
+    .map(x => {
+        const [prop, alias] = x.split(':')
+        const name = prop.split('=')[0].trim()
+        return { prop: name, local: alias ? alias.split('=')[0].trim() : name }
+    })
+
+const FN = Symbol('callback prop')
+
+// Component paths rendered with React Testing Library; props come from the type, real data and solved conditions.
+function renderComponent(file: string, fn: Step, sc: Scenario, factory?: InputFactory): string {
+    const p0 = fn.params?.[0]
+    const type = fn.paramTypes?.[0] ?? ''
+    const members = typeMembers(file, type)
+    const props = p0?.startsWith('{') ? destructured(p0) : []
+    const values: Param[] = props.map(({ prop, local }) => {
+        const t = members.get(prop) ?? ''
+        if (/=>/.test(t) || /^on[A-Z]/.test(prop)) return { name: local, value: FN }
+        if (prop === 'children' || /ReactNode|ReactElement|JSX\.Element/.test(t)) return { name: local, value: 'Child content' }
+        return { name: local, ...(factory?.forType(t, prop) ?? { value: undefined }) }
+    })
+    const whole: Param[] = !props.length && p0 ? [{ name: p0, ...(factory?.forType(type, p0) ?? { value: undefined }) }] : []
+    const all = [...values, ...whole]
+    const unsolved = factory ? applyConditions(sc.conds, all, factory.src) : sc.conds
+
+    const out_ = sc.outcome
+    const full = `${out_ && out_.value === 'null' ? 'renders nothing' : 'renders'}${sc.conds.length ? ` when ${sc.conds.join(' and ')}` : ''}`
+    const out = [`    test(${JSON.stringify(full.length > 110 ? `${full.slice(0, 107)}...` : full)}, () => {`]
+    for (const p of all) {
+        if (p.value === FN) out.push(`      const ${p.name} = vi.fn();`)
+        else if (p.value === undefined) out.push(`      // TODO: value for ${p.name}`)
+        else out.push(`      const ${p.name} = ${toLiteral(p.value)}${p.value && typeof p.value === 'object' ? ' as never' : ''};`)
+    }
+    unsolved.filter(c => !/does not iterate/.test(c)).forEach(c => out.push(`      // TODO: arrange props so that: ${c.replace(/\*\//g, '')}`))
+
+    const attrs = props.filter((_, i) => values[i].value !== undefined).map(({ prop, local }) => `${prop}={${local}}`)
+    if (whole[0]?.value !== undefined) attrs.push(`{...${whole[0].name}}`)
+    out.push(`      const { container } = render(<${fn.value}${attrs.length ? ` ${attrs.join(' ')}` : ''} />);`)
+    if (out_?.value === 'null') {
+        out.push('      expect(container).toBeEmptyDOMElement();')
+    } else if (out_) {
+        out.push('      expect(container).not.toBeEmptyDOMElement();')
+        for (const p of values) {
+            if (typeof p.value === 'string' && p.value && out_.value.includes(`{${p.name}}`)) out.push(`      expect(container).toHaveTextContent(${p.name});`)
+        }
+    }
+    out.push('    });')
+    return out.join('\n')
+}
+
+// Components that read providers or data through hooks need a hand-written harness
+const needsHarness = (fn: Step, imports: Map<string, string>) =>
+    allCalls(fn.children).some(c => /^use[A-Z]/.test(c.callee ?? '') && imports.has(c.callee!) && imports.get(c.callee!) !== 'react')
+
+export const skipped: string[] = []
 
 export const mockableCallees = (fn: Step, steps: Step[]): Set<string> => {
     const imports = importMap(steps)
     return new Set(allCalls(fn.children).filter(s => isMockable(s, imports)).map(s => s.callee!))
 }
 
-export function buildTestFile(file: string, steps: Step[], docs: JestDoc[], factory?: InputFactory, runner: Runner = 'jest', plan?: Plan): string | undefined {
+export interface FileOptions {
+    runner: Runner;
+    testDir: string;       // folder the test file will live in; relative imports are rewritten for it
+    esm?: boolean;
+    plan?: Plan;
+    only?: Set<string>;    // restrict to these exported functions
+}
+
+export function buildTestFile(file: string, steps: Step[], docs: JestDoc[], factory: InputFactory | undefined, o: FileOptions): { code: string; jsx: boolean } | undefined {
     const fns = steps.filter(s => s.kind === 'declare' && s.declType === 'fn' && s.exported)
     if (!fns.length) return undefined
 
+    const srcDir = path.dirname(file)
+    const spec = (m: string) => respec(m, srcDir, o.testDir, o.esm)
     const imports = importMap(steps)
     const mockModules = new Set<string>()
     const importModules = new Set<string>()
     const usedKeys = new Set<string>(['test', 'describe'])
     const blocks: string[] = []
+    const rendered_: Step[] = []
+    let jsx = false
     const registerMock = (callee: string) => {
         const root = callee.split('.')[0]
         if (!imports.has(root)) return
@@ -219,22 +313,31 @@ export function buildTestFile(file: string, steps: Step[], docs: JestDoc[], fact
         if (callee === root) mockModules.add(imports.get(root)!)
     }
 
-    for (const fn of fns) {
-        const tags = tagFunction(fn, docs)
-        const tagOf = new Map(tags.map(t => [t.step, t]))
-        tags.forEach(t => {
-            t.matchers.forEach(k => usedKeys.add(k))
-            if (t.tag.startsWith('mock-') && t.step.callee) registerMock(t.step.callee)
-        })
-        const cases = plan?.get(fn.value) ?? []
-        cases.forEach(c => {
-            Object.keys(c.mocks).forEach(registerMock)
-            if ('matcher' in c.expect) usedKeys.add(c.expect.matcher)
-        })
-        // agent cases take over where the condition solver had to leave a TODO
-        const rendered = expand(fn.children, { conds: [], calls: [] }).map(sc => renderScenario(fn, sc, tagOf, imports, factory))
-            .filter(s => !cases.length || !s.includes('// TODO: arrange'))
-        const all = [...rendered, ...cases.map(c => renderCase(fn, c, imports, factory))]
+    for (const fn of fns.filter(f => !o.only || o.only.has(f.value))) {
+        const scenarios = expand(fn.children, { conds: [], calls: [] })
+        let all: string[]
+        if (isComponent(file, fn)) {
+            if (o.runner !== 'vitest') { skipped.push(`${fn.value}: components need the vitest + React Testing Library runner`); continue }
+            if (needsHarness(fn, imports)) { skipped.push(`${fn.value}: uses hooks that need providers or mocks`); continue }
+            jsx = true
+            all = scenarios.map(sc => renderComponent(file, fn, sc, factory))
+        } else {
+            const tags = tagFunction(fn, docs)
+            const tagOf = new Map(tags.map(t => [t.step, t]))
+            tags.forEach(t => {
+                t.matchers.forEach(k => usedKeys.add(k))
+                if (t.tag.startsWith('mock-') && t.step.callee) registerMock(t.step.callee)
+            })
+            const cases = o.plan?.get(fn.value) ?? []
+            cases.forEach(c => {
+                Object.keys(c.mocks).forEach(registerMock)
+                if ('matcher' in c.expect) usedKeys.add(c.expect.matcher)
+            })
+            // agent cases take over where the condition solver had to leave a TODO
+            all = [...scenarios.map(sc => renderScenario(fn, sc, tagOf, imports, factory)).filter(s => !cases.length || !s.includes('// TODO: arrange')),
+                ...cases.map(c => renderCase(fn, c, imports, factory))]
+        }
+        rendered_.push(fn)
         blocks.push([
             `describe(${JSON.stringify(fn.value)}, () => {`,
             '  afterEach(() => {',
@@ -246,18 +349,25 @@ export function buildTestFile(file: string, steps: Step[], docs: JestDoc[], fact
             '});',
         ].join('\n'))
     }
+    if (!blocks.length) return undefined
 
     if (blocks.some(b => b.includes('toMatchSnapshot'))) usedKeys.add('toMatchSnapshot')
     const base = path.basename(file).replace(/\.[cm]?[jt]sx?$/, '')
     const links = [...usedKeys].map(k => findDoc(docs, k)).filter((d): d is JestDoc => !!d)
         .map(d => `//   ${d.heading} - ${d.url}`)
+    const fromSpec = (stmt: string) => stmt.replace(/(from\s+['"])([^'"]+)(['"])/, (_, a, m, b) => `${a}${spec(m)}${b}`)
 
     const code = [
         `import { describe, test, expect, jest, afterEach } from '@jest/globals';`,
-        `import { ${fns.map(f => f.value).join(', ')} } from './${base}';`,
-        ...steps.filter(s => s.declType === 'import' && importModules.has(s.value.match(/from\s+['"]([^'"]+)['"]/)?.[1] ?? '')).map(s => s.value),
+        ...(jsx ? [`import { render } from '@testing-library/react';`] : []),
+        `import { ${rendered_.map(f => f.value).join(', ')} } from '${spec(`./${base}`)}';`,
+        ...steps.filter(s => s.declType === 'import' && importModules.has(s.value.match(/from\s+['"]([^'"]+)['"]/)?.[1] ?? '')).map(s => fromSpec(s.value)),
         '',
-        ...[...mockModules].map(m => `jest.mock(${JSON.stringify(m)});`),
+        ...[...mockModules].map(m => `jest.mock(${JSON.stringify(spec(m))});`),
+        // a design-system style folder shipping `mocks.ts(x)` is mocked the way the repo's own tests do
+        ...(jsx ? steps.filter(s => s.declType === 'import').map(s => s.value.match(/from\s+['"](\.[^'"]*)['"]/)?.[1])
+            .filter((m): m is string => !!m && ['mocks.tsx', 'mocks.ts'].some(f => fs.existsSync(path.resolve(srcDir, m, f))))
+            .map(m => `vi.mock(${JSON.stringify(spec(m))}, () => import(${JSON.stringify(`${spec(m)}/mocks`)}));`) : []),
         '',
         '// Generated from the code, frontend rules and sampled DB rows - review before committing. Jest APIs used:',
         ...links,
@@ -265,20 +375,25 @@ export function buildTestFile(file: string, steps: Step[], docs: JestDoc[], fact
         blocks.join('\n\n'),
         '',
     ].join('\n')
-    return runner === 'vitest'
-        ? code.replace(`import { describe, test, expect, jest, afterEach } from '@jest/globals';`, `import { describe, test, expect, vi, afterEach } from 'vitest';`).replace(/\bjest\./g, 'vi.')
-        : code
+    return {
+        jsx,
+        code: o.runner === 'vitest'
+            ? code.replace(`import { describe, test, expect, jest, afterEach } from '@jest/globals';`, `import { describe, test, expect, vi, afterEach } from 'vitest';`).replace(/\bjest\./g, 'vi.')
+            : code,
+    }
 }
 
 export interface BuildOptions extends CollectOptions {
     force?: boolean;
     stdout?: boolean;
-    runner?: Runner;
-    // optional edge-case source (the agent); receives each file's steps and the shared input factory
-    planner?: (file: string, steps: Step[], factory: InputFactory) => Promise<Plan | undefined>;
+    runner?: Runner;   // overrides the runner detected from each package
+    // exported functions touched by the PR; the agent is only asked about these (all are still regenerated natively)
+    changed?: (file: string, fns: Step[]) => Set<string>;
+    // optional edge-case source (the agent); only asked about the functions that changed
+    planner?: (file: string, steps: Step[], factory: InputFactory, only?: Set<string>) => Promise<Plan | undefined>;
 }
 
-// Source files -> `<name>.gen.jest.ts` (or `.gen.test.ts` for vitest) next to each one
+// Source files -> test files in each package's own runner (`*.gen.test.ts[x]` for vitest, `*.gen.jest.ts` for jest)
 export async function buildTests(files: string[], opts: BuildOptions = {}): Promise<string[]> {
     let docs: JestDoc[] = []
     try { docs = loadJestDocs() } catch (e) { console.warn(String((e as Error).message)) }
@@ -294,14 +409,18 @@ export async function buildTests(files: string[], opts: BuildOptions = {}): Prom
     const written: string[] = []
 
     for (const [file, steps] of gen.transformer()) {
-        const plan = await opts.planner?.(file, steps, factory).catch(e => { console.warn(`[agent] ${file}: ${(e as Error).message} - using native tests only`); return undefined })
-        const code = buildTestFile(file, steps, docs, factory, opts.runner, plan)
-        if (!code) { console.warn(`No exported functions in ${file}`); continue }
-        if (opts.stdout) { console.log(`// ===== ${file}\n${code}`); continue }
-        const target = file.replace(/\.[cm]?[jt]sx?$/, opts.runner === 'vitest' ? '.gen.test.ts' : '.gen.jest.ts')
-        if (fs.existsSync(target) && !opts.force) { console.warn(`${target} exists - use --force to overwrite`); continue }
-        fs.writeFileSync(target, code)
-        written.push(target)
+        const only = opts.changed?.(file, steps.filter(s => s.kind === 'declare' && s.declType === 'fn' && s.exported))
+        const plan = await opts.planner?.(file, steps, factory, only).catch(e => { console.warn(`[agent] ${file}: ${(e as Error).message} - using native tests only`); return undefined })
+        const target = resolveTarget(file, opts.runner)
+        const testDir = target.testsDir ?? path.dirname(file)
+        const built = buildTestFile(file, steps, docs, factory, { runner: target.runner, testDir, plan, esm: target.esm })
+        if (!built) { console.warn(`No testable exported functions in ${file}`); continue }
+        if (opts.stdout) { console.log(`// ===== ${file}\n${built.code}`); continue }
+        const out = testFileFor(file, target, built.jsx)
+        if (fs.existsSync(out) && !opts.force) { console.warn(`${out} exists - use --force to overwrite`); continue }
+        fs.mkdirSync(path.dirname(out), { recursive: true })
+        fs.writeFileSync(out, built.code)
+        written.push(out)
     }
     return written
 }
@@ -319,7 +438,7 @@ if (require.main === module) {
     buildTests(files, {
         force: args.includes('--force'),
         stdout: args.includes('--stdout'),
-        runner: opt('--runner') === 'vitest' ? 'vitest' : 'jest',
+        runner: opt('--runner') === 'vitest' ? 'vitest' : opt('--runner') === 'jest' ? 'jest' : undefined,
         db: !args.includes('--no-db'),
         databaseUrl: opt('--database-url'),
         envFile: opt('--env'),

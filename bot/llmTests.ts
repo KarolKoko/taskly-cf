@@ -74,9 +74,9 @@ async function ask(prompt: string): Promise<string> {
     return content
 }
 
-export async function agentPlanner(file: string, steps: Step[], factory: InputFactory): Promise<Plan | undefined> {
+export async function agentPlanner(file: string, steps: Step[], factory: InputFactory, only?: Set<string>): Promise<Plan | undefined> {
     const sources = exportedSources(file)
-    const fns = steps.filter(s => s.kind === 'declare' && s.declType === 'fn' && s.exported && sources.has(s.value))
+    const fns = steps.filter(s => s.kind === 'declare' && s.declType === 'fn' && s.exported && sources.has(s.value) && (!only || only.has(s.value)))
     if (!fns.length) return undefined
 
     const notes: string[] = []

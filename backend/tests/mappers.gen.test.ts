@@ -1,12 +1,12 @@
-import { describe, test, expect, jest, afterEach } from '@jest/globals';
-import { fromModel } from './mappers';
-import { todoSchema } from './validators.js';
+import { describe, test, expect, vi, afterEach } from 'vitest';
+import { fromModel } from '../src/features/todos/mappers.js';
+import { todoSchema } from '../src/features/todos/validators.js';
 
 
 // Generated from the code, frontend rules and sampled DB rows - review before committing. Jest APIs used:
 //   test(name, fn, timeout) - https://jestjs.io/docs/api#testname-fn-timeout
 //   describe(name, fn) - https://jestjs.io/docs/api#describename-fn
-//   jest.mock(moduleName, factory, options) - https://jestjs.io/docs/jest-object#jestmockmodulename-factory-options
+//   vi.mock(moduleName, factory, options) - https://jestjs.io/docs/jest-object#jestmockmodulename-factory-options
 //   .toHaveBeenCalledWith(arg1, arg2, ...) - https://jestjs.io/docs/expect#tohavebeencalledwitharg1-arg2-
 //   .toEqual(value) - https://jestjs.io/docs/expect#toequalvalue
 //   expect(value) - https://jestjs.io/docs/expect#expectvalue
@@ -14,8 +14,8 @@ import { todoSchema } from './validators.js';
 
 describe("fromModel", () => {
   afterEach(() => {
-    jest.clearAllMocks();
-    jest.restoreAllMocks();
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
   test("returns", () => {
@@ -24,7 +24,7 @@ describe("fromModel", () => {
       created_at: new Date("2026-10-01T12:00:00.000Z"),
       updated_at: new Date("2026-10-01T12:00:00.000Z"),
     } as Parameters<typeof fromModel>[0];
-    jest.spyOn(todoSchema, 'parse' as never).mockReturnValue(undefined as never); // TODO: stub result
+    (vi.spyOn(todoSchema, 'parse' as never) as any).mockReturnValue(undefined as never); // TODO: stub result
 
     const result = fromModel(record);
     expect(result).toMatchSnapshot(); // characterises: todoSchema.parse({ id: record.id, title: record.title, description: record.descr

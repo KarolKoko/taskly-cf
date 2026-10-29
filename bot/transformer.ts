@@ -17,6 +17,7 @@ export interface Step {
     file: string;
     kind: StepKind;
     line: number;
+    endLine?: number;
     value: string;
     declType?: 'var' | 'fn' | 'class' | 'import' | 'export';
     exported?: boolean;
@@ -204,6 +205,7 @@ export class TestGenerator {
             file: sf.fileName,
             kind,
             line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1,
+            endLine: sf.getLineAndCharacterOfPosition(node.getEnd()).line + 1,
             value,
             ...extra,
             children: [],
