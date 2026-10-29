@@ -1,0 +1,33 @@
+{
+  "name": "taskly-app-node-agent",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest",
+    "sanity-check": "tsx bot/scripts/sanity-check.ts",
+    "pr-tests": "tsx bot/scripts/pr-tests.ts",
+    "docs:scrape": "tsx bot/jestDocs.ts",
+    "tests:gen": "tsx bot/testBuilder.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KarolKoko/taskly-cf.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/KarolKoko/taskly-cf/issues"
+  },
+  "homepage": "https://github.com/KarolKoko/taskly-cf#readme",
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/pg": "^8.23.1",
+    "jest": "^30.5.2",
+    "pg": "^8.23.1",
+    "ts-jest": "^29.4.15",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "zod": "^4.6.7"
+  }
+}
