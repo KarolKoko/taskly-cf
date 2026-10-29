@@ -519,7 +519,9 @@ export function applyConditions(conds: string[], params: Param[], src: InputSour
         if (typeof cur === 'string' && re.test(cur) === want) return true
         if (want) {
             const v = sample(fieldName(pp), specOf(pp))
-            return typeof v === 'string' && re.test(v) && setAt(pp, v)
+            if (typeof v === 'string' && re.test(v)) return setAt(pp, v)
+            const guess = ['2026-01-15', '2026-01-15T12:00:00Z', '12:00', '1', '123456', 'abc', 'a@b.co', 'https://example.com', 'A1'].find(c => re.test(c))
+            return guess !== undefined && setAt(pp, guess)
         }
         return setAt(pp, '!')
     }
