@@ -1,0 +1,70 @@
+name: PR tests
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-tests-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  generate-and-test:
+    runs-on: ubuntu-latest
+    env:
+      # Repository variable (Settings > Variables). Anything but "true" uses the free AST builder.
+      USE_LLM: ${{ vars.USE_LLM || 'false' }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_MODEL: ${{ vars.LLM_MODEL }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      # Keys listed in .env.example must exist for the sanity gate; real values are not needed for unit tests.
+      POSTGRES_HOST: localhost
+      POSTGRES_USER: ci
+      POSTGRES_PASSWORD: ci
+      POSTGRES_DB: ci
+      DB_PORT: '5432'
+      API_PORT: '8000'
+      WEB_PORT: '8080'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Restore LLM cache
+        if: env.USE_LLM == 'true'
+        uses: actions/cache@v4
+        with:
+          path: .testgen-cache
+          key: testgen-${{ github.event.pull_request.number }}-${{ github.sha }}
+          restore-keys: testgen-
+
+      - name: Sanity pre-check
+        run: npm run sanity-check
+
+      - name: Generate and run tests
+        run: npm run pr-tests
+
+      - name: Comment on PR
+        if: failure() && hashFiles('sanity-report.md', 'pr-report.md') != ''
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: agent-tests
+          path: ${{ hashFiles('pr-report.md') != '' && 'pr-report.md' || 'sanity-report.md' }}
+
+      - name: Clear comment when green
+        if: success()
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: agent-tests
+          delete: true

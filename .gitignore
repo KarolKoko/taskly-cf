@@ -23,3 +23,8 @@ assignment-4.md
 
 # macOS
 .DS_Store
+
+# Bot output
+.testgen-cache/
+pr-report.md
+sanity-report.md

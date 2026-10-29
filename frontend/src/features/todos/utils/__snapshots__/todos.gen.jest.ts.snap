@@ -1,0 +1,87 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`formatDate returns 1`] = `"15 Jan 2026"`;
+
+exports[`selectTodos returns 1`] = `[]`;
+
+exports[`validateTodo returns when !(!input.title.trim()) and input.title.trim().length > 120 and !(input.description.trim().leng... 1`] = `
+{
+  "due_date": "Enter a valid date.",
+  "title": "The title must be at most 120 characters.",
+}
+`;
+
+exports[`validateTodo returns when !(!input.title.trim()) and input.title.trim().length > 120 and !(input.description.trim().leng... 2`] = `
+{
+  "title": "The title must be at most 120 characters.",
+}
+`;
+
+exports[`validateTodo returns when !(!input.title.trim()) and input.title.trim().length > 120 and !(input.description.trim().leng... 3`] = `
+{
+  "title": "The title must be at most 120 characters.",
+}
+`;
+
+exports[`validateTodo returns when !(!input.title.trim()) and input.title.trim().length > 120 and input.description.trim().length... 1`] = `
+{
+  "description": "The description must be at most 2000 characters.",
+  "due_date": "Enter a valid date.",
+  "title": "The title must be at most 120 characters.",
+}
+`;
+
+exports[`validateTodo returns when !(!input.title.trim()) and input.title.trim().length > 120 and input.description.trim().length... 2`] = `
+{
+  "description": "The description must be at most 2000 characters.",
+  "title": "The title must be at most 120 characters.",
+}
+`;
+
+exports[`validateTodo returns when !(!input.title.trim()) and input.title.trim().length > 120 and input.description.trim().length... 3`] = `
+{
+  "description": "The description must be at most 2000 characters.",
+  "title": "The title must be at most 120 characters.",
+}
+`;
+
+exports[`validateTodo returns when !input.title.trim() and !(input.description.trim().length > 2000) and !(input.due_date) 1`] = `
+{
+  "title": "Enter a task title.",
+}
+`;
+
+exports[`validateTodo returns when !input.title.trim() and !(input.description.trim().length > 2000) and input.due_date and !(!/^... 1`] = `
+{
+  "title": "Enter a task title.",
+}
+`;
+
+exports[`validateTodo returns when !input.title.trim() and !(input.description.trim().length > 2000) and input.due_date and !/^\\d... 1`] = `
+{
+  "due_date": "Enter a valid date.",
+  "title": "Enter a task title.",
+}
+`;
+
+exports[`validateTodo returns when !input.title.trim() and input.description.trim().length > 2000 and !(input.due_date) 1`] = `
+{
+  "description": "The description must be at most 2000 characters.",
+  "title": "Enter a task title.",
+}
+`;
+
+exports[`validateTodo returns when !input.title.trim() and input.description.trim().length > 2000 and input.due_date and !(!/^\\d{... 1`] = `
+{
+  "description": "The description must be at most 2000 characters.",
+  "title": "Enter a task title.",
+}
+`;
+
+exports[`validateTodo returns when !input.title.trim() and input.description.trim().length > 2000 and input.due_date and !/^\\d{4}... 1`] = `
+{
+  "description": "The description must be at most 2000 characters.",
+  "due_date": "Enter a valid date.",
+  "title": "Enter a task title.",
+}
+`;
